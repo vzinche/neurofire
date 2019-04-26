@@ -7,6 +7,7 @@ from .unet.unet_2d_dilated_global import UNetDilated2DGlobal
 from .unet.unet_2p5d import UNet2p5D
 from .unet.unet_3d import UNet3D
 from .unet.unet_3d_2l import UNet3D2l
+from .unet.unet_3d_encoder_n_layers import UNetEnc3DNl
 
 from .unet_multiscale.unet_2d_multiscale import UNet2DMultiscale
 from .unet_multiscale.unet_3d_multiscale import UNet3DMultiscale
