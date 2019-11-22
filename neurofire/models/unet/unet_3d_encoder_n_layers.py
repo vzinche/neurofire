@@ -29,10 +29,6 @@ class Encoder(Xcoder):
                                       pre_conv=get_pooler(scale_factor))
 
 
-class Output(Conv3D):
-    def __init__(self, in_channels, out_channels, kernel_size):
-        super(Output, self).__init__(in_channels, out_channels, kernel_size)
-
 CONV_TYPES = {'vanilla': ConvELU3D,
               'conv_bn': BNReLUConv3D}
 
@@ -96,7 +92,7 @@ class UNetEnc3DNl(nn.Module):
 
         # Final activation
         if final_activation == 'auto':
-            self.final_activation == nn.Softmax2d()
+            self.final_activation = nn.Softmax2d()
         elif isinstance(final_activation, str):
             self.final_activation = getattr(nn, final_activation)()
         elif isinstance(final_activation, nn.Module):
@@ -117,7 +113,7 @@ class UNetEnc3DNl(nn.Module):
             x = self.final_activation(x)
         return x
 
-    # Input is should be of shape (BATCH, 3, OTHER_DIMS) ,
+    # Input should be of shape (BATCH, 3, OTHER_DIMS),
     # where 3 is anchor, positive and negative samples
     def forward(self, input_):
         features_batch = []
@@ -126,4 +122,3 @@ class UNetEnc3DNl(nn.Module):
                         for sample in triplet]
             features_batch.append(torch.cat(features))
         return (torch.stack(features_batch))
-
