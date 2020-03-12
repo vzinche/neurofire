@@ -58,7 +58,7 @@ class Decoder(Xcoder):
                                       post_conv=get_sampler(scale_factor))
 
 
-class UNet3DNlNoSkip(nn.Module):
+class UNet3DNl(nn.Module):
     """
     3D U-Net architecture without skip conncetions
     with the number of layers specified by the user.
@@ -87,7 +87,7 @@ class UNet3DNlNoSkip(nn.Module):
         final_activation:  final activation used (default: 'auto')
         conv_type_key: convolution type used (default: 'vanilla')
         """
-        super(UNet3DNlNoSkip, self).__init__()
+        super(UNet3DNl, self).__init__()
 
         assert conv_type_key in CONV_TYPES, conv_type_key
         conv_type = CONV_TYPES[conv_type_key]
@@ -142,7 +142,7 @@ class UNet3DNlNoSkip(nn.Module):
             fd.append(initial_num_fmaps * fmap_growth**n)
         decoders = []
         for n in range(num_layers):
-            decoders.append(Decoder(fd[n], fd[n+1], 3, conv_type=conv_type,
+            decoders.append(Decoder(fd[n] + fe[-n-1], fd[n+1], 3, conv_type=conv_type,
                                     scale_factor=self.scale_factor[-n-2]))
         self.decoders = nn.ModuleList(decoders)
 
@@ -167,32 +167,37 @@ class UNet3DNlNoSkip(nn.Module):
             mask = torch.ones(x.shape)
         else:
             mask = (x != mask).type(torch.float)
+        # pool the mask
         for i in self.scale_factor:
             pooler = get_pooler(i)
             mask = mask if pooler is None else pooler(mask)
 
-        # pass the input through encoders and pull the mask
+        encoder_out = []
+        # apply encoders and remember their outputs
         for encoder in self.encoders:
             x = encoder(x)
+            encoder_out.append(x)
+
         x = self.base(x)
         # if we want to use the encoder for feature extraction we might want to pool
         if pool and self.global_pool is not None:
             x = self.global_pool(x, mask) if isinstance(self.global_pool, GlobalMaskedAvgPool3d) \
                                           else self.global_pool(x)
-        return x
+            return x
+        else:
+            return x, encoder_out
 
     def forward(self, input_):
         # encode
-        embedding = self.encode(input_)
+        embedding, encode_out = self.encode(input_)
         # the first decoder upsample
         x = embedding if self.base_upsample is None else self.base_upsample(embedding)
         # apply decoders
-        for decoder in self.decoders:
-            # the decoder gets input from the previous decoder and the encoder
-            # from the same level
-            x = decoder(x)
+        max_level = len(self.decoders) - 1
+        for level, decoder in enumerate(self.decoders):
+            x = decoder(torch.cat((x, encode_out[max_level - level]), 1))
         # apply the last layer
         x = self.output(x)
         if self.final_activation is not None:
             x = self.final_activation(x)
-        return x, embedding[0]
+        return x
