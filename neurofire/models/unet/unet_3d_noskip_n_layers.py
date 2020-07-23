@@ -70,7 +70,7 @@ class UNet3DNlNoSkip(nn.Module):
                  fmap_growth,
                  num_layers=5,
                  scale_factor=2,
-                 glob_pool=None,
+                 glob_pool='avg',
                  final_activation='auto',
                  conv_type_key='vanilla'):
         """
@@ -161,7 +161,7 @@ class UNet3DNlNoSkip(nn.Module):
             raise NotImplementedError
 
 
-    def encode(self, x, pool=False, mask=0):
+    def encode(self, x, pool=True, mask=0):
         # get a downsampled mask
         if not mask and isinstance(mask, bool):
             mask = torch.ones(x.shape)
@@ -183,7 +183,7 @@ class UNet3DNlNoSkip(nn.Module):
 
     def forward(self, input_):
         # encode
-        embedding = self.encode(input_)
+        embedding = self.encode(input_, pool=False)
         # the first decoder upsample
         x = embedding if self.base_upsample is None else self.base_upsample(embedding)
         # apply decoders

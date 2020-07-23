@@ -108,7 +108,7 @@ class UNetEnc3DNl(nn.Module):
         x = self.final_conv(x)
         if self.global_pool is not None:
             x = self.global_pool(x)
-            x = x.view(x.shape[:-2])  # remove all the singleton dims, but the last (for loss)
+            x = x.view(x.shape[:-3])  # remove all the singleton dims
         if self.final_activation is not None:
             x = self.final_activation(x)
         return x
