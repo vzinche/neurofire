@@ -15,10 +15,8 @@ class DropChannels(Transform):
         super().__init__(**super_kwargs)
         assert isinstance(index, (int, list, tuple)),\
             "Only supports channels specified by single number or list / tuple"
-        # TODO implement this
-        if isinstance(index, (list, tuple)):
-            raise NotImplementedError()
-        self.slice_ = self.to_slice(index)
+        self.index = index if isinstance(index, (list, tuple)) else [index]
+        assert all(ind >= 0 for ind in self.index)
 
         if from_ == 'prediction':
             self.drop_in_prediction = True
@@ -32,23 +30,19 @@ class DropChannels(Transform):
         else:
             raise ValueError("%s option for parameter `from_` not supported" % from_)
 
-    # FIXME need slicing magic to make this work for arbitrary indices !
-    @staticmethod
-    def to_slice(index):
-        if isinstance(index, int):
-            # FIXME
-            assert index == 0
-            return np.s_[:, 1:]
-        else:
-            raise NotImplementedError()
+    def _drop_channels(self, tensor):
+        n_channels = tensor.shape[1]
+        assert all(index < n_channels for index in self.index), "%s, %s" % (str(self.index), str(n_channels))
+        keep_axis = [index for index in range(n_channels) if index not in self.index]
+        return tensor[:, keep_axis]
 
     def batch_function(self, tensors):
         assert len(tensors) == 2
         prediction, target = tensors
         if self.drop_in_prediction:
-            prediction = prediction[self.slice_]
+            prediction = self._drop_channels(prediction)
         if self.drop_in_target:
-            target = target[self.slice_]
+            target = self._drop_channels(target)
         return prediction, target
 
 
@@ -74,6 +68,18 @@ class SoftmaxPrediction(Transform):
         assert len(tensors) == 2
         prediction, target = tensors
         return F.softmax(prediction, dim=1), target
+
+
+class SigmoidPrediction(Transform):
+    """
+    """
+    def __init__(self, **super_kwargs):
+        super().__init__(**super_kwargs)
+
+    def batch_function(self, tensors):
+        assert len(tensors) == 2
+        prediction, target = tensors
+        return torch.sigmoid(prediction), target
 
 
 class OrdinalToOneHot(Transform):
@@ -388,4 +394,30 @@ class AddNoise(Transform):
             prediction = self._noise(prediction)
         if self.apply_ in ('target', 'both'):
             target = self._noise(target)
+        return prediction, target
+
+
+class AlignPredictionAndTarget(Transform):
+    def batch_function(self, tensors):
+        assert len(tensors) == 2
+        prediction, target = tensors
+        pshape = prediction.shape[2:]
+        tshape = target.shape[2:]
+
+        crop_target = any(tsh > psh for tsh, psh in zip(tshape, pshape))
+        crop_pred = any(psh > tsh for tsh, psh in zip(tshape, pshape))
+        if crop_target and crop_pred:
+            raise RuntimeError("Inconsistent target and prediction sizes")
+
+        if crop_target:
+            shape_diff = [(tsh - psh) // 2 for tsh, psh in zip(tshape, pshape)]
+            bb = tuple(slice(sd, tsh - sd) for sd, tsh in zip(shape_diff, tshape))
+            bb = np.s_[:, :] + bb
+            target = target[bb]
+        elif crop_pred:
+            shape_diff = [(psh - tsh) // 2 for tsh, psh in zip(tshape, pshape)]
+            bb = tuple(slice(sd, psh - sd) for sd, tsh in zip(shape_diff, tshape))
+            bb = np.s_[:, :] + bb
+            prediction = prediction[bb]
+
         return prediction, target
