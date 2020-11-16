@@ -115,7 +115,9 @@ class UNetEnc3DNl(nn.Module):
 
     # Input should be of shape (BATCH, 3, OTHER_DIMS),
     # where 3 is anchor, positive and negative samples
-    def forward(self, input_):
+    def forward(self, input_, just_encode=False):
+        if just_encode:
+            return self.encode(input_)
         features_batch = []
         for triplet in input_:
             features = [self.encode(sample.unsqueeze(0))

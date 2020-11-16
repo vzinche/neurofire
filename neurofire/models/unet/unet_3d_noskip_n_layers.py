@@ -60,7 +60,7 @@ class Decoder(Xcoder):
 
 class UNet3DNlNoSkip(nn.Module):
     """
-    3D U-Net architecture without skip conncetions
+    3D U-Net architecture without skip connections
     with the number of layers specified by the user.
     """
     def __init__(self,
@@ -70,6 +70,7 @@ class UNet3DNlNoSkip(nn.Module):
                  fmap_growth,
                  num_layers=5,
                  scale_factor=2,
+                 emb_size=None,
                  glob_pool='avg',
                  final_activation='auto',
                  conv_type_key='vanilla'):
@@ -103,14 +104,15 @@ class UNet3DNlNoSkip(nn.Module):
         # The global pooling applied on the bottleneck embedding space
         # to convert the feature maps to a feature vector
         # of the same size for any input size
-        # if glob_pool == 'avg':
-            # self.global_pool = nn.AdaptiveAvgPool3d(1)
-        # elif glob_pool == 'max':
-            # self.global_pool = nn.AdaptiveMaxPool3d(1)
-        if glob_pool == 'avg_mask':
+        if glob_pool == 'avg':
+            self.global_pool = nn.AdaptiveAvgPool3d(1)
+        elif glob_pool == 'max':
+            self.global_pool = nn.AdaptiveMaxPool3d(1)
+        elif glob_pool == 'avg_mask':
             self.global_pool = GlobalMaskedAvgPool3d()
         else:
             self.global_pool = None
+        self.mask_value = 0
 
         # Set attributes
         self.in_channels = in_channels
@@ -133,11 +135,12 @@ class UNet3DNlNoSkip(nn.Module):
         f0b = initial_num_fmaps * fmap_growth**num_layers
 
         self.base = Encoder(fe[num_layers], f0b, 3, conv_type=conv_type,
-                       scale_factor=self.scale_factor[num_layers])
+                            scale_factor=self.scale_factor[num_layers])
+        self.base_bottleneck = ConvELU3D(f0b, emb_size, 1) if emb_size is not None else None
         self.base_upsample = get_sampler(self.scale_factor[num_layers])
 
         # Decoders list
-        fd = [f0b]
+        fd = [f0b] if emb_size is None else [emb_size]
         for n in reversed(range(num_layers)):
             fd.append(initial_num_fmaps * fmap_growth**n)
         decoders = []
@@ -160,30 +163,37 @@ class UNet3DNlNoSkip(nn.Module):
         else:
             raise NotImplementedError
 
-
-    def encode(self, x, pool=True, mask=0):
-        # get a downsampled mask
-        if not mask and isinstance(mask, bool):
-            mask = torch.ones(x.shape)
-        else:
-            mask = (x != mask).type(torch.float)
+    def get_mask(self, inp, mask_val):
+        mask = (~torch.isclose(inp, torch.ones_like(inp) * mask_val, atol=5e-03)).type(torch.float)
+        # pool the mask
         for i in self.scale_factor:
             pooler = get_pooler(i)
             mask = mask if pooler is None else pooler(mask)
+        return mask
 
-        # pass the input through encoders and pull the mask
+    def pool(self, inp, mask=None):
+        if isinstance(self.global_pool, GlobalMaskedAvgPool3d):
+            assert mask is not None
+            inp = self.global_pool(inp, mask)
+        else:
+            inp = self.global_pool(inp) if self.global_pool is not None else inp
+        inp = torch.flatten(inp, 1)
+        return inp
+
+    def forward(self, x, just_encode=False):
+        mask = self.get_mask(x, self.mask_value) \
+               if isinstance(self.global_pool, GlobalMaskedAvgPool3d) else None
+        # encode
         for encoder in self.encoders:
             x = encoder(x)
-        x = self.base(x)
-        # if we want to use the encoder for feature extraction we might want to pool
-        if pool and self.global_pool is not None:
-            x = self.global_pool(x, mask) if isinstance(self.global_pool, GlobalMaskedAvgPool3d) \
-                                          else self.global_pool(x)
-        return x
+        embedding = self.base(x)
 
-    def forward(self, input_):
-        # encode
-        embedding = self.encode(input_, pool=False)
+        if self.base_bottleneck is not None:
+            embedding = self.base_bottleneck(embedding)
+
+        if just_encode:
+            return self.pool(embedding, mask)
+
         # the first decoder upsample
         x = embedding if self.base_upsample is None else self.base_upsample(embedding)
         # apply decoders
@@ -195,4 +205,4 @@ class UNet3DNlNoSkip(nn.Module):
         x = self.output(x)
         if self.final_activation is not None:
             x = self.final_activation(x)
-        return x, embedding[0]
+        return x, self.pool(embedding, mask)
