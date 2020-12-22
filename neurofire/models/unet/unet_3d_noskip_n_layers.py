@@ -69,8 +69,10 @@ class UNet3DNlNoSkip(nn.Module):
                  initial_num_fmaps,
                  fmap_growth,
                  num_layers=5,
+                 num_decode=None,
                  scale_factor=2,
                  emb_size=None,
+                 emb_fc=None,
                  glob_pool='avg',
                  final_activation='auto',
                  conv_type_key='vanilla'):
@@ -139,18 +141,23 @@ class UNet3DNlNoSkip(nn.Module):
         self.base_bottleneck = ConvELU3D(f0b, emb_size, 1) if emb_size is not None else None
         self.base_upsample = get_sampler(self.scale_factor[num_layers])
 
+        emb_size = f0b if emb_size is None else emb_size
+        self.emb_fc = nn.Linear(emb_size, emb_fc) if emb_fc else None
+
         # Decoders list
         fd = [f0b] if emb_size is None else [emb_size]
-        for n in reversed(range(num_layers)):
+        if num_decode is None:
+            num_decode = num_layers
+        for n in reversed(range(num_decode)):
             fd.append(initial_num_fmaps * fmap_growth**n)
         decoders = []
-        for n in range(num_layers):
+        for n in range(num_decode):
             decoders.append(Decoder(fd[n], fd[n+1], 3, conv_type=conv_type,
                                     scale_factor=self.scale_factor[-n-2]))
         self.decoders = nn.ModuleList(decoders)
 
         # Build output
-        self.output = Conv3D(fd[num_layers], out_channels, 3)
+        self.output = Conv3D(fd[num_decode], out_channels, 3)
         # Parse final activation
         if final_activation == 'auto':
             final_activation = nn.Sigmoid() if out_channels == 1 else nn.Softmax3d()
@@ -205,4 +212,7 @@ class UNet3DNlNoSkip(nn.Module):
         x = self.output(x)
         if self.final_activation is not None:
             x = self.final_activation(x)
-        return x, self.pool(embedding, mask)
+        pooled_emb = self.pool(embedding, mask)
+        if self.emb_fc is not None:
+            pooled_emb = self.emb_fc(pooled_emb)
+        return x, pooled_emb
